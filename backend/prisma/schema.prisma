@@ -1,0 +1,85 @@
+// Artixio Regulatory Intelligence Triage Pipeline
+// Schema deliberately models the real-world shape of regulatory data:
+// one Authority issues many Directives, each Directive spawns many Action Items
+// that compliance officers have to triage. Status fields are stored as plain
+// strings (not native enums) on purpose -- see README "Why strings, not enums"
+// -- because the raw feeds we ingest send inconsistent casing/values and we
+// need a place to store the *original* value before the API layer normalizes it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model RegulatoryAuthority {
+  id          String   @id @default(cuid())
+  name        String
+  country     String
+  website     String?
+  contactEmail String?
+  createdAt   DateTime @default(now())
+
+  directives  ComplianceDirective[]
+
+  @@map("regulatory_authorities")
+}
+
+model ComplianceDirective {
+  id            String   @id @default(cuid())
+  authorityId   String
+  authority     RegulatoryAuthority @relation(fields: [authorityId], references: [id], onDelete: Cascade)
+
+  referenceCode String   // e.g. "EMA-2026-0143" -- intentionally NOT unique in seed data (dupes are a messy-data case)
+  title         String
+  summary       String?
+
+  // Raw, unvalidated status as it arrived from the source feed.
+  // Examples in seed data: "Enacted", "PENDING ", "withdrawn!!", "n/a", ""
+  // NOTE: we deliberately do NOT store a "normalizedStatus" column here.
+  // Normalization is a *read-time* concern computed by the API validation
+  // layer (src/validation.ts) so that improving the mapping logic doesn't
+  // require a migration or a backfill -- it just changes what the next
+  // GET request returns.
+  rawStatus     String
+
+  effectiveDate DateTime? // nullable on purpose -- missing critical date is a required edge case
+  rawText       String?   // dumped source text, sometimes contains HTML/garbage
+
+  // Like status, "flagged" is computed at read time (see validation.ts) from
+  // rawStatus / effectiveDate / conflicts with child action items rather than
+  // stored here -- there is no single write path that could keep a stored
+  // flag reliably in sync with all of those inputs.
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  actionItems   ActionItem[]
+
+  @@map("compliance_directives")
+}
+
+model ActionItem {
+  id          String   @id @default(cuid())
+  directiveId String
+  directive   ComplianceDirective @relation(fields: [directiveId], references: [id], onDelete: Cascade)
+
+  description String
+  assignee    String?
+
+  // Raw status exactly as seeded/entered -- e.g. "pending", "In-Progress", "RESOLVED", "blocked??"
+  // Normalized the same way as ComplianceDirective.rawStatus -- see note above.
+  rawStatus   String
+
+  priority    String   @default("MEDIUM") // LOW | MEDIUM | HIGH
+
+  dueDate     DateTime? // nullable -- missing due date edge case
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("action_items")
+}
