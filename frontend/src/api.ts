@@ -27,7 +27,7 @@ export interface ListResponse<T> {
   meta: { total: number; page: number; pageSize: number };
 }
 
-const BASE = "/api";
+const BASE = import.meta.env.VITE_API_URL || "/api";
 
 export interface ActionItemFilters {
   status?: string;
